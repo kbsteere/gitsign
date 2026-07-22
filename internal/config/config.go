@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -132,6 +133,10 @@ type Config struct {
 	// in memory and mint new signing certificates without re-prompting.
 	// Only takes effect when GITSIGN_CREDENTIAL_CACHE is used.
 	OfflineAccess bool
+	// OfflineAccessMaxAge bounds how long the credential cache daemon may
+	// keep minting certificates from a refresh token before requiring a new
+	// interactive login. Zero disables the bound.
+	OfflineAccessMaxAge time.Duration
 }
 
 // CLientSecret retrieves the OIDC client secret from the file provided
@@ -172,8 +177,9 @@ func Get() (*Config, error) {
 		// RekorVersion is left at its zero value ("unset") here; it is normalized
 		// to the v1 default after validation, so that an explicitly-set value can
 		// be distinguished from the default and gated on enableSigstoreGo.
-		Autoclose:        true,
-		AutocloseTimeout: 6,
+		Autoclose:           true,
+		AutocloseTimeout:    6,
+		OfflineAccessMaxAge: 24 * time.Hour,
 	}
 
 	// Get values from config file.
@@ -203,6 +209,9 @@ func Get() (*Config, error) {
 		out.Autoclose = envOrValue(fmt.Sprintf("%s_AUTOCLOSE", prefix), fmt.Sprintf("%t", out.Autoclose)) == "true"
 		out.AutocloseTimeout, _ = strconv.Atoi(envOrValue(fmt.Sprintf("%s_AUTOCLOSE_TIMEOUT", prefix), fmt.Sprintf("%d", out.AutocloseTimeout)))
 		out.OfflineAccess = envOrValue(fmt.Sprintf("%s_OFFLINE_ACCESS", prefix), fmt.Sprintf("%t", out.OfflineAccess)) == "true"
+		if d, err := time.ParseDuration(envOrValue(fmt.Sprintf("%s_OFFLINE_ACCESS_MAX_AGE", prefix), out.OfflineAccessMaxAge.String())); err == nil && d >= 0 {
+			out.OfflineAccessMaxAge = d
+		}
 	}
 
 	out.LogPath = envOrValue("GITSIGN_LOG", out.LogPath)
@@ -335,6 +344,13 @@ func applyGitOptions(out *Config, cfg map[string]string) {
 			out.MatchCommitter = strings.EqualFold(v, "true")
 		case strings.EqualFold(k, "gitsign.offlineAccess"):
 			out.OfflineAccess = strings.EqualFold(v, "true")
+		case strings.EqualFold(k, "gitsign.offlineAccessMaxAge"):
+			if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+				out.OfflineAccessMaxAge = d
+			} else {
+				log.Printf("invalid gitsign.offlineAccessMaxAge value %q, defaulting to 24h", v)
+				out.OfflineAccessMaxAge = 24 * time.Hour
+			}
 		case strings.EqualFold(k, "gitsign.autoclose"):
 			out.Autoclose = strings.EqualFold(v, "true")
 		case strings.EqualFold(k, "gitsign.autocloseTimeout"):

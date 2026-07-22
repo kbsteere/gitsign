@@ -40,13 +40,22 @@ type Service struct {
 	refreshMu sync.Mutex
 	// refreshTokens holds OIDC refresh tokens in memory only, keyed by
 	// issuer and client ID. They are never persisted to disk.
-	refreshTokens map[string]string
+	refreshTokens map[string]refreshToken
 
-	// authorize, refresh, mint, and interactive are overridable for testing.
+	// authorize, refresh, mint, interactive, and now are overridable for testing.
 	authorize   func(ctx context.Context, cfg *config.Config) (*oidc.Tokens, error)
 	refresh     func(ctx context.Context, cfg *config.Config, refreshToken string) (*oidc.Tokens, error)
 	mint        func(ctx context.Context, cfg *config.Config, idToken string) (*fulcio.Identity, error)
 	interactive func(ctx context.Context, cfg *config.Config) (*fulcio.Identity, error)
+	now         func() time.Time
+}
+
+// refreshToken pairs a refresh token with the time of the interactive login
+// that produced it. Token rotation preserves issuedAt, so the session age is
+// always measured from the login, not the last use.
+type refreshToken struct {
+	token    string
+	issuedAt time.Time
 }
 
 const (
@@ -59,7 +68,8 @@ var errNoRefreshToken = errors.New("no refresh token stored")
 func NewService() *Service {
 	s := &Service{
 		store:         cache.New(defaultExpiration, cleanupInterval),
-		refreshTokens: map[string]string{},
+		refreshTokens: map[string]refreshToken{},
+		now:           time.Now,
 		authorize: func(ctx context.Context, cfg *config.Config) (*oidc.Tokens, error) {
 			flow, err := oidc.NewFlow(cfg, os.Stdin, os.Stdout)
 			if err != nil {
@@ -178,12 +188,16 @@ func (s *Service) refreshCredential(ctx context.Context, cfg *config.Config) (*a
 	if !ok {
 		return nil, errNoRefreshToken
 	}
-	tokens, err := s.refresh(ctx, cfg, rt)
+	if cfg.OfflineAccessMaxAge > 0 && s.now().Sub(rt.issuedAt) > cfg.OfflineAccessMaxAge {
+		delete(s.refreshTokens, refreshKey(cfg))
+		return nil, fmt.Errorf("refresh token is older than %v, requiring a new interactive login", cfg.OfflineAccessMaxAge)
+	}
+	tokens, err := s.refresh(ctx, cfg, rt.token)
 	if err != nil {
 		delete(s.refreshTokens, refreshKey(cfg))
 		return nil, err
 	}
-	s.refreshTokens[refreshKey(cfg)] = tokens.RefreshToken
+	s.refreshTokens[refreshKey(cfg)] = refreshToken{token: tokens.RefreshToken, issuedAt: rt.issuedAt}
 
 	id, err := s.mint(ctx, cfg, tokens.IDToken)
 	if err != nil {
@@ -198,7 +212,7 @@ func (s *Service) setRefreshToken(cfg *config.Config, token string) {
 	}
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
-	s.refreshTokens[refreshKey(cfg)] = token
+	s.refreshTokens[refreshKey(cfg)] = refreshToken{token: token, issuedAt: s.now()}
 }
 
 // refreshKey identifies the OIDC session a refresh token belongs to. Unlike

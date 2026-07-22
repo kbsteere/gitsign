@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/sigstore/gitsign/internal/cache/api"
 	"github.com/sigstore/gitsign/internal/config"
@@ -92,7 +93,7 @@ func TestOfflineAccess(t *testing.T) {
 	if f.authorizeCalls != 1 || f.refreshCalls != 0 {
 		t.Fatalf("flow calls: got = %d authorize / %d refresh, want = 1 / 0", f.authorizeCalls, f.refreshCalls)
 	}
-	if got := s.refreshTokens[refreshKey(cfg)]; got != "authorize-rt-1" {
+	if got := s.refreshTokens[refreshKey(cfg)].token; got != "authorize-rt-1" {
 		t.Fatalf("stored refresh token: got = %q, want = %q", got, "authorize-rt-1")
 	}
 
@@ -104,7 +105,7 @@ func TestOfflineAccess(t *testing.T) {
 	if f.authorizeCalls != 1 || f.refreshCalls != 1 {
 		t.Fatalf("flow calls: got = %d authorize / %d refresh, want = 1 / 1", f.authorizeCalls, f.refreshCalls)
 	}
-	if got := s.refreshTokens[refreshKey(cfg)]; got != "refresh-rt-1" {
+	if got := s.refreshTokens[refreshKey(cfg)].token; got != "refresh-rt-1" {
 		t.Fatalf("stored refresh token: got = %q, want = %q", got, "refresh-rt-1")
 	}
 
@@ -127,7 +128,7 @@ func TestOfflineAccessRefreshFailure(t *testing.T) {
 	}
 
 	// Seed a refresh token that the provider will reject.
-	s.refreshTokens[refreshKey(cfg)] = "revoked"
+	s.refreshTokens[refreshKey(cfg)] = refreshToken{token: "revoked", issuedAt: s.now()}
 	f.refreshErr = errors.New("refresh token is invalid or has already been claimed")
 
 	// The failed refresh falls back to the interactive flow and replaces
@@ -138,8 +139,81 @@ func TestOfflineAccessRefreshFailure(t *testing.T) {
 	if f.refreshCalls != 1 || f.authorizeCalls != 1 {
 		t.Fatalf("flow calls: got = %d refresh / %d authorize, want = 1 / 1", f.refreshCalls, f.authorizeCalls)
 	}
-	if got := s.refreshTokens[refreshKey(cfg)]; got != "authorize-rt-1" {
+	if got := s.refreshTokens[refreshKey(cfg)].token; got != "authorize-rt-1" {
 		t.Fatalf("stored refresh token: got = %q, want = %q", got, "authorize-rt-1")
+	}
+}
+
+func TestOfflineAccessMaxAge(t *testing.T) {
+	f := &fakeFlows{}
+	s := newTestService(t, f)
+	cfg := &config.Config{
+		Issuer:              "https://example.com/auth",
+		ClientID:            "sigstore",
+		OfflineAccess:       true,
+		OfflineAccessMaxAge: 24 * time.Hour,
+	}
+
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+
+	// Interactive login at t0.
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-a", Config: cfg}, new(api.Credential)); err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+
+	// Within the max age the refresh token is used, and rotation does not
+	// extend the session.
+	now = now.Add(23 * time.Hour)
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-b", Config: cfg}, new(api.Credential)); err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+	if f.authorizeCalls != 1 || f.refreshCalls != 1 {
+		t.Fatalf("flow calls: got = %d authorize / %d refresh, want = 1 / 1", f.authorizeCalls, f.refreshCalls)
+	}
+
+	// Past the max age (measured from the login, not the rotation above),
+	// the token is dropped and a new interactive login is required.
+	now = now.Add(2 * time.Hour)
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-c", Config: cfg}, new(api.Credential)); err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+	if f.authorizeCalls != 2 || f.refreshCalls != 1 {
+		t.Fatalf("flow calls: got = %d authorize / %d refresh, want = 2 / 1", f.authorizeCalls, f.refreshCalls)
+	}
+
+	// The new login resets the session clock.
+	now = now.Add(23 * time.Hour)
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-d", Config: cfg}, new(api.Credential)); err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+	if f.authorizeCalls != 2 || f.refreshCalls != 2 {
+		t.Fatalf("flow calls: got = %d authorize / %d refresh, want = 2 / 2", f.authorizeCalls, f.refreshCalls)
+	}
+}
+
+func TestOfflineAccessMaxAgeDisabled(t *testing.T) {
+	f := &fakeFlows{}
+	s := newTestService(t, f)
+	cfg := &config.Config{
+		Issuer:        "https://example.com/auth",
+		ClientID:      "sigstore",
+		OfflineAccess: true,
+		// OfflineAccessMaxAge zero: sessions never expire.
+	}
+
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-a", Config: cfg}, new(api.Credential)); err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+	now = now.Add(1000 * time.Hour)
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-b", Config: cfg}, new(api.Credential)); err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+	if f.authorizeCalls != 1 || f.refreshCalls != 1 {
+		t.Fatalf("flow calls: got = %d authorize / %d refresh, want = 1 / 1", f.authorizeCalls, f.refreshCalls)
 	}
 }
 
@@ -152,7 +226,7 @@ func TestOfflineAccessDisabled(t *testing.T) {
 		Issuer:   "https://example.com/auth",
 		ClientID: "sigstore",
 	}
-	s.refreshTokens[refreshKey(cfg)] = "unused"
+	s.refreshTokens[refreshKey(cfg)] = refreshToken{token: "unused", issuedAt: s.now()}
 
 	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-a", Config: cfg}, new(api.Credential)); err == nil {
 		t.Fatal("expected error from interactive fallback, got nil")
@@ -160,7 +234,7 @@ func TestOfflineAccessDisabled(t *testing.T) {
 	if f.authorizeCalls != 0 || f.refreshCalls != 0 {
 		t.Fatalf("offline flow calls: got = %d authorize / %d refresh, want = 0 / 0", f.authorizeCalls, f.refreshCalls)
 	}
-	if got := s.refreshTokens[refreshKey(cfg)]; got != "unused" {
+	if got := s.refreshTokens[refreshKey(cfg)].token; got != "unused" {
 		t.Fatalf("stored refresh token: got = %q, want = %q", got, "unused")
 	}
 }

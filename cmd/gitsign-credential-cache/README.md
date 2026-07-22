@@ -47,14 +47,16 @@ $ git config --global gitsign.offlineAccess true
 With this enabled, the first signing operation opens the browser as usual, but
 the daemon keeps the OIDC refresh token in memory and silently mints new
 signing certificates from it when the cached credential expires. The browser
-is only needed again when the daemon restarts or the provider revokes the
-session. Refresh tokens are shared across working directories for the same
-issuer and client ID, so one login covers all of your repos.
+is only needed again when the daemon restarts, the provider revokes the
+session, or the session exceeds `gitsign.offlineAccessMaxAge` (default `24h`,
+measured from the interactive login; set to `0` to disable the bound).
+Refresh tokens are shared across working directories for the same issuer and
+client ID, so one login covers all of your repos.
 
 ⚠️ This extends the signing window from the certificate lifetime (~10 minutes)
-to the OIDC provider's session lifetime: any user or process that can access
-the daemon's memory or socket can sign as you until the refresh token expires
-or is revoked. Refresh tokens are never written to disk.
+to the session bound above: any user or process that can access the daemon's
+memory or socket can sign as you until the refresh token expires, is revoked,
+or exceeds the maximum session age. Refresh tokens are never written to disk.
 
 ## Usage
 

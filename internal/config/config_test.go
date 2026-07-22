@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
@@ -83,14 +84,15 @@ func TestGet(t *testing.T) {
 		// Default value
 		ClientID: "sigstore",
 		// Overridden by env var
-		Issuer:           "tacocat",
-		RedirectURL:      "example.com",
-		ConnectorID:      "bar",
-		RekorMode:        "online",
-		EnableSigstoreGo: true,
-		RekorVersion:     1,
-		Autoclose:        true,
-		AutocloseTimeout: 6,
+		Issuer:              "tacocat",
+		RedirectURL:         "example.com",
+		ConnectorID:         "bar",
+		RekorMode:           "online",
+		EnableSigstoreGo:    true,
+		RekorVersion:        1,
+		Autoclose:           true,
+		AutocloseTimeout:    6,
+		OfflineAccessMaxAge: 24 * time.Hour,
 		// From config file.
 		URLOpener: "firefox --new-tab {{.URL}}",
 	}
@@ -147,6 +149,63 @@ func TestOfflineAccess(t *testing.T) {
 	}
 	if !got.OfflineAccess {
 		t.Error("expected OfflineAccess to be set from env var")
+	}
+}
+
+func TestOfflineAccessMaxAge(t *testing.T) {
+	t.Cleanup(func() { execFn = realExec })
+
+	// Defaults to 24h.
+	execFn = func() (io.Reader, error) {
+		return strings.NewReader(""), nil
+	}
+	got, err := Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 24 * time.Hour; got.OfflineAccessMaxAge != want {
+		t.Errorf("OfflineAccessMaxAge: got = %v, want = %v", got.OfflineAccessMaxAge, want)
+	}
+
+	// Set via git config, including zero to disable.
+	for v, want := range map[string]time.Duration{"8h30m": 8*time.Hour + 30*time.Minute, "0": 0} {
+		execFn = func() (io.Reader, error) {
+			return strings.NewReader("gitsign.offlineaccessmaxage " + v + "\n"), nil
+		}
+		got, err = Get()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.OfflineAccessMaxAge != want {
+			t.Errorf("OfflineAccessMaxAge(%q): got = %v, want = %v", v, got.OfflineAccessMaxAge, want)
+		}
+	}
+
+	// Invalid values keep the default.
+	for _, v := range []string{"tacocat", "-1h"} {
+		execFn = func() (io.Reader, error) {
+			return strings.NewReader("gitsign.offlineaccessmaxage " + v + "\n"), nil
+		}
+		got, err = Get()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := 24 * time.Hour; got.OfflineAccessMaxAge != want {
+			t.Errorf("OfflineAccessMaxAge(%q): got = %v, want = %v", v, got.OfflineAccessMaxAge, want)
+		}
+	}
+
+	// Env var takes precedence.
+	execFn = func() (io.Reader, error) {
+		return strings.NewReader("gitsign.offlineaccessmaxage 8h\n"), nil
+	}
+	t.Setenv("GITSIGN_OFFLINE_ACCESS_MAX_AGE", "1h")
+	got, err = Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Hour; got.OfflineAccessMaxAge != want {
+		t.Errorf("OfflineAccessMaxAge: got = %v, want = %v", got.OfflineAccessMaxAge, want)
 	}
 }
 
