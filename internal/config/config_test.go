@@ -109,6 +109,47 @@ func TestGet(t *testing.T) {
 	}
 }
 
+func TestOfflineAccess(t *testing.T) {
+	t.Cleanup(func() { execFn = realExec })
+
+	// Defaults to false.
+	execFn = func() (io.Reader, error) {
+		return strings.NewReader(""), nil
+	}
+	got, err := Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OfflineAccess {
+		t.Error("expected OfflineAccess to default to false")
+	}
+
+	// Set via git config.
+	execFn = func() (io.Reader, error) {
+		return strings.NewReader("gitsign.offlineaccess true\n"), nil
+	}
+	got, err = Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.OfflineAccess {
+		t.Error("expected OfflineAccess to be set from git config")
+	}
+
+	// Set via env var.
+	execFn = func() (io.Reader, error) {
+		return strings.NewReader(""), nil
+	}
+	t.Setenv("GITSIGN_OFFLINE_ACCESS", "true")
+	got, err = Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.OfflineAccess {
+		t.Error("expected OfflineAccess to be set from env var")
+	}
+}
+
 func TestEnableSigstoreGo(t *testing.T) {
 	t.Cleanup(func() { execFn = realExec })
 

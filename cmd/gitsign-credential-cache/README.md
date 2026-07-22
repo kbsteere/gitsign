@@ -23,12 +23,38 @@ If you understand the risks, read on!
 
 - Ephemeral Private Key
 - Fulcio Code Signing certificate + chain
+- OIDC refresh token (only when `gitsign.offlineAccess` is enabled, see below)
 
 All data is stored in memory, keyed to your Git working directory (i.e.
 different repo paths will cache different keys)
 
 The data that is cached would allow any user with access to sign artifacts as
 you, until the signing certificate expires, typically in ten minutes.
+
+## Offline access (refresh tokens)
+
+By default the cache only holds credentials for the lifetime of the signing
+certificate (typically ten minutes), so you need to re-authenticate in the
+browser once the certificate expires. If your OIDC provider supports the
+`offline_access` scope with refresh token rotation (the public sigstore Dex
+instance does), you can opt in to refresh token caching:
+
+```sh
+$ git config --global gitsign.offlineAccess true
+# or: export GITSIGN_OFFLINE_ACCESS=true
+```
+
+With this enabled, the first signing operation opens the browser as usual, but
+the daemon keeps the OIDC refresh token in memory and silently mints new
+signing certificates from it when the cached credential expires. The browser
+is only needed again when the daemon restarts or the provider revokes the
+session. Refresh tokens are shared across working directories for the same
+issuer and client ID, so one login covers all of your repos.
+
+⚠️ This extends the signing window from the certificate lifetime (~10 minutes)
+to the OIDC provider's session lifetime: any user or process that can access
+the daemon's memory or socket can sign as you until the refresh token expires
+or is revoked. Refresh tokens are never written to disk.
 
 ## Usage
 

@@ -126,6 +126,12 @@ type Config struct {
 	// The command is not run through a shell - the split tokens are passed
 	// directly to exec, so shell metacharacters are inert.
 	URLOpener string
+
+	// OfflineAccess requests the offline_access OIDC scope during interactive
+	// authentication so the credential cache daemon can keep a refresh token
+	// in memory and mint new signing certificates without re-prompting.
+	// Only takes effect when GITSIGN_CREDENTIAL_CACHE is used.
+	OfflineAccess bool
 }
 
 // CLientSecret retrieves the OIDC client secret from the file provided
@@ -196,6 +202,7 @@ func Get() (*Config, error) {
 		out.TimestampCert = envOrValue(fmt.Sprintf("%s_TIMESTAMP_CERT_CHAIN", prefix), out.TimestampCert)
 		out.Autoclose = envOrValue(fmt.Sprintf("%s_AUTOCLOSE", prefix), fmt.Sprintf("%t", out.Autoclose)) == "true"
 		out.AutocloseTimeout, _ = strconv.Atoi(envOrValue(fmt.Sprintf("%s_AUTOCLOSE_TIMEOUT", prefix), fmt.Sprintf("%d", out.AutocloseTimeout)))
+		out.OfflineAccess = envOrValue(fmt.Sprintf("%s_OFFLINE_ACCESS", prefix), fmt.Sprintf("%t", out.OfflineAccess)) == "true"
 	}
 
 	out.LogPath = envOrValue("GITSIGN_LOG", out.LogPath)
@@ -326,6 +333,8 @@ func applyGitOptions(out *Config, cfg map[string]string) {
 			out.TimestampCert = v
 		case strings.EqualFold(k, "gitsign.matchCommitter"):
 			out.MatchCommitter = strings.EqualFold(v, "true")
+		case strings.EqualFold(k, "gitsign.offlineAccess"):
+			out.OfflineAccess = strings.EqualFold(v, "true")
 		case strings.EqualFold(k, "gitsign.autoclose"):
 			out.Autoclose = strings.EqualFold(v, "true")
 		case strings.EqualFold(k, "gitsign.autocloseTimeout"):

@@ -295,10 +295,7 @@ func (f *IdentityFactory) GetToken(ctx context.Context, cfg *config.Config) (*oa
 }
 
 func (f *IdentityFactory) NewIdentity(ctx context.Context, cfg *config.Config) (*Identity, error) {
-	clientID := cfg.ClientID
-
 	clientSecret, err := cfg.ClientSecret()
-
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +305,22 @@ func (f *IdentityFactory) NewIdentity(ctx context.Context, cfg *config.Config) (
 		return nil, err
 	}
 
+	return f.identityFromFlow(cfg, clientSecret, authFlow)
+}
+
+// NewIdentityWithToken creates a new identity using a pre-acquired OIDC
+// identity token, without any interactive or ambient token acquisition.
+func (f *IdentityFactory) NewIdentityWithToken(_ context.Context, cfg *config.Config, idToken string) (*Identity, error) {
+	clientSecret, err := cfg.ClientSecret()
+	if err != nil {
+		return nil, err
+	}
+	return f.identityFromFlow(cfg, clientSecret, &oauthflow.StaticTokenGetter{RawToken: idToken})
+}
+
+// identityFromFlow generates an ephemeral private key and requests a signing
+// certificate from Fulcio using the given token getter.
+func (f *IdentityFactory) identityFromFlow(cfg *config.Config, clientSecret string, authFlow oauthflow.TokenGetter) (*Identity, error) {
 	fmt.Fprintln(f.out, "Generating ephemeral keys...") // nolint:errcheck
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -317,7 +330,7 @@ func (f *IdentityFactory) NewIdentity(ctx context.Context, cfg *config.Config) (
 	client, err := fulcio.NewClient(cfg.Fulcio,
 		fulcio.OIDCOptions{
 			Issuer:       cfg.Issuer,
-			ClientID:     clientID,
+			ClientID:     cfg.ClientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  cfg.RedirectURL,
 			TokenGetter:  authFlow,
