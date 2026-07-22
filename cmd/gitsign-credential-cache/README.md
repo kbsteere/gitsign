@@ -58,6 +58,53 @@ to the session bound above: any user or process that can access the daemon's
 memory or socket can sign as you until the refresh token expires, is revoked,
 or exceeds the maximum session age. Refresh tokens are never written to disk.
 
+### Complete setup (Linux, systemd)
+
+1. Install the binaries:
+
+   ```sh
+   $ go install github.com/sigstore/gitsign@latest
+   $ GOBIN=$HOME/.local/bin go install github.com/sigstore/gitsign/cmd/gitsign-credential-cache@latest
+   ```
+
+   (`$HOME/.local/bin` is where the systemd unit below expects the daemon;
+   adjust the unit's `ExecStart` if you install elsewhere.)
+
+2. Install and start the systemd user socket (units in [contrib/systemd](../../contrib/systemd)):
+
+   ```sh
+   $ install -m 0644 -D -t ~/.config/systemd/user/ contrib/systemd/gitsign-credential-cache.{socket,service}
+   $ systemctl --user daemon-reload
+   $ systemctl --user enable --now gitsign-credential-cache.socket
+   ```
+
+   The daemon is socket-activated, starts on first use, and survives across
+   login sessions.
+
+3. Point gitsign at the socket and enable offline access. Add to your shell
+   profile:
+
+   ```sh
+   export GITSIGN_CREDENTIAL_CACHE="$HOME/.cache/sigstore/gitsign/cache.sock"
+   ```
+
+   and enable the option (optionally tuning the session bound):
+
+   ```sh
+   $ git config --global gitsign.offlineAccess true
+   $ git config --global gitsign.offlineAccessMaxAge 24h   # optional, this is the default
+   ```
+
+4. Sign a commit. The first signing operation opens the browser once; after
+   that, commits sign silently until the daemon restarts or the session
+   exceeds the max age.
+
+Note: the interactive login is driven by the daemon, so it must be able to
+open a browser. If it is running as a systemd user service, make sure your
+graphical session environment is available to user units (most desktop
+environments import `DISPLAY`/`WAYLAND_DISPLAY` automatically; otherwise run
+`systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XAUTHORITY`).
+
 ## Usage
 
 ```sh
