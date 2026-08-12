@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -169,6 +170,29 @@ func (f *Flow) Authorize(ctx context.Context) (*Tokens, error) {
 		return nil, err
 	}
 	return &Tokens{IDToken: idToken, RefreshToken: token.RefreshToken}, nil
+}
+
+// SupportsRefreshGrant reports whether the issuer advertises the OAuth 2.0
+// refresh_token grant in its discovery document. Requesting offline_access
+// from a provider that cannot redeem refresh tokens costs the user a consent
+// prompt for nothing, so callers should skip the offline flow when this
+// returns false. Providers that omit grant_types_supported entirely are
+// treated as supporting the grant.
+func SupportsRefreshGrant(ctx context.Context, issuer string) (bool, error) {
+	provider, err := oidc.NewProvider(ctx, issuer)
+	if err != nil {
+		return false, fmt.Errorf("discovering OIDC provider: %w", err)
+	}
+	var claims struct {
+		GrantTypes []string `json:"grant_types_supported"`
+	}
+	if err := provider.Claims(&claims); err != nil {
+		return false, err
+	}
+	if claims.GrantTypes == nil {
+		return true, nil
+	}
+	return slices.Contains(claims.GrantTypes, "refresh_token"), nil
 }
 
 // Refresh exchanges a refresh token for new tokens. The returned Tokens hold

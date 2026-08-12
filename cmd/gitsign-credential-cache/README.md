@@ -44,6 +44,11 @@ $ git config --global gitsign.offlineAccess true
 # or: export GITSIGN_OFFLINE_ACCESS=true
 ```
 
+The daemon only requests the `offline_access` scope when the provider's
+discovery document advertises the `refresh_token` grant. Providers that have
+disabled the grant treat the option as if it were off, so you are not asked to
+consent to offline access that could never be used.
+
 With this enabled, the first signing operation opens the browser as usual, but
 the daemon keeps the OIDC refresh token in memory and silently mints new
 signing certificates from it when the cached credential expires. The browser

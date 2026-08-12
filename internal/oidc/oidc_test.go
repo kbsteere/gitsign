@@ -198,6 +198,43 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func TestSupportsRefreshGrant(t *testing.T) {
+	ctx := t.Context()
+
+	discovery := func(t *testing.T, extra string) string {
+		t.Helper()
+		var srv *httptest.Server
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprintf(w, `{"issuer": %q, "authorization_endpoint": %q, "token_endpoint": %q, "jwks_uri": %q%s}`,
+				srv.URL, srv.URL+"/auth", srv.URL+"/token", srv.URL+"/keys", extra)
+		})
+		srv = httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+
+	for _, tc := range []struct {
+		name  string
+		extra string
+		want  bool
+	}{
+		{name: "grant advertised", extra: `, "grant_types_supported": ["authorization_code", "refresh_token"]`, want: true},
+		{name: "grant not advertised", extra: `, "grant_types_supported": ["authorization_code", "urn:ietf:params:oauth:grant-type:device_code"]`, want: false},
+		{name: "grant types omitted", extra: "", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SupportsRefreshGrant(ctx, discovery(t, tc.extra))
+			if err != nil {
+				t.Fatalf("SupportsRefreshGrant: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("SupportsRefreshGrant: got = %t, want = %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRefresh(t *testing.T) {
 	ctx := t.Context()
 	f := newFakeProvider(t)

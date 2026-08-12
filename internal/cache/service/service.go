@@ -42,12 +42,14 @@ type Service struct {
 	// issuer and client ID. They are never persisted to disk.
 	refreshTokens map[string]refreshToken
 
-	// authorize, refresh, mint, interactive, and now are overridable for testing.
-	authorize   func(ctx context.Context, cfg *config.Config) (*oidc.Tokens, error)
-	refresh     func(ctx context.Context, cfg *config.Config, refreshToken string) (*oidc.Tokens, error)
-	mint        func(ctx context.Context, cfg *config.Config, idToken string) (*fulcio.Identity, error)
-	interactive func(ctx context.Context, cfg *config.Config) (*fulcio.Identity, error)
-	now         func() time.Time
+	// authorize, refresh, refreshSupported, mint, interactive, and now are
+	// overridable for testing.
+	authorize        func(ctx context.Context, cfg *config.Config) (*oidc.Tokens, error)
+	refresh          func(ctx context.Context, cfg *config.Config, refreshToken string) (*oidc.Tokens, error)
+	refreshSupported func(ctx context.Context, issuer string) (bool, error)
+	mint             func(ctx context.Context, cfg *config.Config, idToken string) (*fulcio.Identity, error)
+	interactive      func(ctx context.Context, cfg *config.Config) (*fulcio.Identity, error)
+	now              func() time.Time
 }
 
 // refreshToken pairs a refresh token with the time of the interactive login
@@ -84,6 +86,7 @@ func NewService() *Service {
 			}
 			return oidc.Refresh(ctx, cfg.Issuer, cfg.ClientID, clientSecret, refreshToken)
 		},
+		refreshSupported: oidc.SupportsRefreshGrant,
 		mint: func(ctx context.Context, cfg *config.Config, idToken string) (*fulcio.Identity, error) {
 			return fulcio.NewIdentityFactory(os.Stdin, os.Stdout).NewIdentityWithToken(ctx, cfg, idToken)
 		},
@@ -154,6 +157,23 @@ func (s *Service) newCredential(ctx context.Context, cfg *config.Config) (*api.C
 // when one is available, and falls back to the interactive flow (storing the
 // resulting refresh token for next time) when it is not.
 func (s *Service) offlineAccessCredential(ctx context.Context, cfg *config.Config) (*api.Credential, error) {
+	// Requesting offline_access from a provider that cannot redeem refresh
+	// tokens costs the user a consent prompt for nothing, so use the plain
+	// interactive flow when the grant is not advertised.
+	supported, err := s.refreshSupported(ctx, cfg.Issuer)
+	if err != nil {
+		fmt.Printf("gitsign-credential-cache: error checking refresh grant support, assuming supported: %v\n", err)
+		supported = true
+	}
+	if !supported {
+		fmt.Println("gitsign-credential-cache: provider does not support the refresh_token grant, falling back to interactive flow...")
+		id, err := s.interactive(ctx, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("error getting new identity: %w", err)
+		}
+		return credential(id)
+	}
+
 	cred, err := s.refreshCredential(ctx, cfg)
 	if err == nil {
 		fmt.Println("gitsign-credential-cache: minted credential from refresh token")

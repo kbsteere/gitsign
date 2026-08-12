@@ -33,10 +33,11 @@ import (
 // fakeFlows wires a Service with fake authorize/refresh/mint implementations
 // that mimic provider refresh token rotation, and counts calls to each.
 type fakeFlows struct {
-	authorizeCalls int
-	refreshCalls   int
-	liveToken      string
-	refreshErr     error
+	authorizeCalls   int
+	refreshCalls     int
+	liveToken        string
+	refreshErr       error
+	grantUnsupported bool
 }
 
 func newTestService(t *testing.T, f *fakeFlows) *Service {
@@ -70,10 +71,34 @@ func newTestService(t *testing.T, f *fakeFlows) *Service {
 			ChainPEM:   []byte("chain"),
 		}, nil
 	}
+	s.refreshSupported = func(_ context.Context, _ string) (bool, error) {
+		return !f.grantUnsupported, nil
+	}
 	s.interactive = func(_ context.Context, _ *config.Config) (*fulcio.Identity, error) {
 		return nil, errors.New("interactive flow not available in tests")
 	}
 	return s
+}
+
+func TestOfflineAccessRefreshGrantUnsupported(t *testing.T) {
+	f := &fakeFlows{grantUnsupported: true}
+	s := newTestService(t, f)
+	cfg := &config.Config{
+		Issuer:        "https://example.com/auth",
+		ClientID:      "sigstore",
+		OfflineAccess: true,
+	}
+
+	// When the provider does not advertise the refresh_token grant, the
+	// offline flow (and its offline_access consent prompt) is skipped in
+	// favor of the plain interactive flow, without touching stored tokens.
+	s.refreshTokens[refreshKey(cfg)] = refreshToken{token: "stale", issuedAt: s.now()}
+	if err := s.GetCredential(api.GetCredentialRequest{ID: "repo-a", Config: cfg}, new(api.Credential)); err == nil {
+		t.Fatal("expected error from interactive fallback, got nil")
+	}
+	if f.authorizeCalls != 0 || f.refreshCalls != 0 {
+		t.Fatalf("offline flow calls: got = %d authorize / %d refresh, want = 0 / 0", f.authorizeCalls, f.refreshCalls)
+	}
 }
 
 func TestOfflineAccess(t *testing.T) {
