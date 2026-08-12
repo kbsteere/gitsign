@@ -29,6 +29,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/pkg/browser"
 	"github.com/sigstore/gitsign/internal/config"
+	"github.com/sigstore/gitsign/internal/fulcio"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/oauth"
 	"github.com/sigstore/sigstore/pkg/oauthflow"
@@ -56,6 +57,9 @@ type Flow struct {
 	HTMLPage     string
 	Input        io.Reader
 	Output       io.Writer
+	// BrowserOpener, if set, is used to open the login URL instead of the
+	// platform default browser.
+	BrowserOpener func(url string) error
 }
 
 // NewFlow creates a Flow from gitsign config, matching the interactive flow
@@ -73,7 +77,7 @@ func NewFlow(cfg *config.Config, in io.Reader, out io.Writer) (*Flow, error) {
 		fmt.Fprintln(out, "error getting interactive success html, using static default", err) // nolint:errcheck
 		html = oauth.InteractiveSuccessHTML
 	}
-	return &Flow{
+	flow := &Flow{
 		Issuer:       cfg.Issuer,
 		ClientID:     cfg.ClientID,
 		ClientSecret: clientSecret,
@@ -82,7 +86,17 @@ func NewFlow(cfg *config.Config, in io.Reader, out io.Writer) (*Flow, error) {
 		HTMLPage:     html,
 		Input:        in,
 		Output:       out,
-	}, nil
+	}
+	// If a custom URL opener command is configured, open the login URL with it
+	// instead of the platform default browser.
+	if cfg.URLOpener != "" {
+		open, err := fulcio.NewCommandURLOpener(cfg.URLOpener)
+		if err != nil {
+			return nil, err
+		}
+		flow.BrowserOpener = open
+	}
+	return flow, nil
 }
 
 // Authorize obtains tokens interactively: it opens the system browser to the
@@ -128,8 +142,12 @@ func (f *Flow) Authorize(ctx context.Context) (*Tokens, error) {
 	}
 
 	authCodeURL := cfg.AuthCodeURL(state, opts...)
+	open := f.BrowserOpener
+	if open == nil {
+		open = browserOpener
+	}
 	var code string
-	if err := browserOpener(authCodeURL); err != nil {
+	if err := open(authCodeURL); err != nil {
 		// Swap to the out of band flow if we can't open the browser.
 		fmt.Fprintf(f.output(), "error opening browser: %v\n", err) // nolint:errcheck
 		code = f.doOobFlow(&cfg, state, opts)

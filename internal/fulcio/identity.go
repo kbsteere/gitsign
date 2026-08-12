@@ -232,7 +232,7 @@ func (f *IdentityFactory) tokenGetter(ctx context.Context, cfg *config.Config) (
 	// If a custom URL opener command is configured, open the login URL with it
 	// instead of the platform default browser.
 	if cfg.URLOpener != "" {
-		open, err := newCommandURLOpener(cfg.URLOpener)
+		open, err := NewCommandURLOpener(cfg.URLOpener)
 		if err != nil {
 			return nil, err
 		}

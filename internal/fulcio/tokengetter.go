@@ -24,7 +24,7 @@ import (
 	"github.com/pkg/browser"
 )
 
-// newCommandURLOpener builds a browser-opener function that runs a user-provided
+// NewCommandURLOpener builds a browser-opener function that runs a user-provided
 // command to open the login URL. The command is split into a program and its
 // arguments using shell-style word splitting (so quoting can be used to keep
 // arguments containing spaces together), and each resulting token is rendered
@@ -36,7 +36,7 @@ import (
 //
 // The returned function is suitable for use with
 // oauthflow.WithBrowserOpener.
-func newCommandURLOpener(command string) (func(url string) error, error) {
+func NewCommandURLOpener(command string) (func(url string) error, error) {
 	// Validate the template up front so misconfiguration fails before we start
 	// the auth flow rather than at browser-open time.
 	if _, err := renderURLOpenerCommand(command, ""); err != nil {

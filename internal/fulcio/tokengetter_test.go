@@ -235,11 +235,11 @@ func TestSplitCommand(t *testing.T) {
 func TestNewCommandURLOpener_ValidatesUpFront(t *testing.T) {
 	// Invalid config should fail when the opener is constructed, before any
 	// browser open is attempted.
-	if _, err := newCommandURLOpener("firefox --no-url"); err == nil {
+	if _, err := NewCommandURLOpener("firefox --no-url"); err == nil {
 		t.Fatal("expected error for command without {{.URL}}, got nil")
 	}
 
-	if _, err := newCommandURLOpener("firefox {{.URL}}"); err != nil {
+	if _, err := NewCommandURLOpener("firefox {{.URL}}"); err != nil {
 		t.Fatalf("unexpected error for valid command: %v", err)
 	}
 }
@@ -247,7 +247,7 @@ func TestNewCommandURLOpener_ValidatesUpFront(t *testing.T) {
 func TestNewCommandURLOpener_RunsCommand(t *testing.T) {
 	// 'true' exits 0 and ignores its args - exercises the exec path end to end
 	// without depending on a real browser.
-	open, err := newCommandURLOpener("true {{.URL}}")
+	open, err := NewCommandURLOpener("true {{.URL}}")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
